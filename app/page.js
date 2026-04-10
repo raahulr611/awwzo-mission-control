@@ -94,7 +94,7 @@ o[id]={...t,startDate:e,endDate:addD(e,(t.dur||1)-1)};return o[id];}
 tasks.forEach(t=>go(t.id));
 return Object.values(o).sort((a,b)=>{if(a.status==="done"&&b.status!=="done")return 1;if(a.status!=="done"&&b.status==="done")return-1;if(!a.startDate||!b.startDate)return 0;return a.startDate-b.startDate;});}
 
-function parseSec(text){if(!text)return[];const rx=/→\s*([A-Z][A-Z\s\-'()0-9]+)/g;const ms=[...text.matchAll(rx)];
+function parseSec(text){if(!text)return[];const rx=/→\s*([A-Z][A-Z\s\-'()0-9]*[A-Z0-9)])/g;const ms=[...text.matchAll(rx)];
 if(!ms.length)return[{title:null,content:text}];
 return ms.map((m,i)=>({title:m[1].trim(),content:text.slice(m.index+m[0].length,i<ms.length-1?ms[i+1].index:text.length).trim()}));}
 
