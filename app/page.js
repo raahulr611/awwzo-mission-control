@@ -122,7 +122,7 @@ const SCo={"WHAT THIS IS":"#3282B8","WHY IT MATTERS":"#27AE60","STEP-BY-STEP EXE
 const addD=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
 const fD=d=>d.toLocaleDateString("en-IN",{day:"numeric",month:"short"});
 const fDF=d=>d.toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
-const toI=d=>d.toISOString().split("T")[0];
+const toI=d=>{const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const dd=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${dd}`;};
 const dB=(a,b)=>Math.ceil((b-a)/864e5);
 const S={xs:12,sm:13,base:15,lg:17,xl:20,xxl:26,huge:34,tag:11,label:12,check:24,radius:10,rSm:6,pad:16,padL:24};
 const DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -157,24 +157,26 @@ function getMonthDays(year,month){
   return days;
 }
 
-function getEventsForDate(dateStr,calEvents,calRecurring){
+function getEventsForDate(dateStr,calEvents,hiddenRec){
   const events=[];
-  const d=new Date(dateStr);
+  const parts=dateStr.split("-");
+  const d=new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2]));
   const dow=d.getDay();
+  const hr=hiddenRec||[];
   // Custom events
-  (calEvents||[]).forEach(e=>{if(e.date===dateStr)events.push(e);if(e.endDate&&e.date<=dateStr&&e.endDate>=dateStr)events.push({...e,isRange:true});});
+  (calEvents||[]).forEach(e=>{if(e.date===dateStr)events.push(e);if(e.endDate&&e.date<=dateStr&&e.endDate>=dateStr&&e.date!==dateStr)events.push({...e,isRange:true});});
   // Holidays
   HOLIDAYS.forEach(h=>{if(h.date===dateStr)events.push(h);});
-  // Recurring content (Mon=1 to Sat=6)
-  WEEKLY_CONTENT.forEach(w=>{if(w.day===dow)events.push({...w,date:dateStr,recurring:true});});
-  // Weekly review
-  RECURRING_REVIEWS.forEach(r=>{if(r.dayOfWeek===dow)events.push({...r,date:dateStr,recurring:true});});
+  // Recurring content (filter out hidden)
+  WEEKLY_CONTENT.forEach(w=>{if(w.day===dow&&!hr.includes(`content-${w.day}-${w.title}`))events.push({...w,date:dateStr,recurring:true,recurId:`content-${w.day}-${w.title}`});});
+  // Weekly review (filter out hidden)
+  RECURRING_REVIEWS.forEach(r=>{if(r.dayOfWeek===dow&&!hr.includes(`review-${r.dayOfWeek}-${r.title}`))events.push({...r,date:dateStr,recurring:true,recurId:`review-${r.dayOfWeek}-${r.title}`});});
   return events;
 }
 
-function getWeekSummary(weekDates,calEvents){
+function getWeekSummary(weekDates,calEvents,hiddenRecurring){
   const summary={Content:0,"Ad Campaign":0,WhatsApp:0,Referral:0,Holiday:0,Review:0,Custom:0};
-  weekDates.forEach(d=>{if(!d)return;const ds=toI(d);const evts=getEventsForDate(ds,calEvents);evts.forEach(e=>{if(summary[e.type]!==undefined)summary[e.type]++;});});
+  weekDates.forEach(d=>{if(!d)return;const ds=toI(d);const evts=getEventsForDate(ds,calEvents,hiddenRecurring);evts.forEach(e=>{if(summary[e.type]!==undefined)summary[e.type]++;});});
   return summary;
 }
 
@@ -330,6 +332,7 @@ export default function Home(){
   const saveTimer=useRef(null);
   // Calendar state
   const[calEvents,setCalEvents]=useState([]);
+  const[hiddenRecurring,setHiddenRecurring]=useState([]);
   const[calMonth,setCalMonth]=useState(new Date().getMonth());
   const[calYear,setCalYear]=useState(new Date().getFullYear());
   const[calView,setCalView]=useState("month"); // month | week
@@ -344,21 +347,22 @@ export default function Home(){
     if(data.notes)setNotes(data.notes);if(data.learnings)setLearnings(data.learnings);
     if(data.tAi)setTAi(data.tAi);if(data.analysis)setAnalysis(data.analysis);
     if(data.calEvents)setCalEvents(data.calEvents);
+    if(data.hiddenRecurring)setHiddenRecurring(data.hiddenRecurring);
     if(data.mode==="dashboard"){setMode("dashboard");setView("analysis");}else setMode("setup");
   }else setMode("setup");})();
   },[userEmail]);
 
-  const sv=useCallback((t,s,w,k,kh,n,lr,ta,an,m,ce)=>{
-    const payload={tasks:t,sd:s,wD:w,kpis:k,kpiHistory:kh,notes:n,learnings:lr,tAi:ta,analysis:an,mode:m,calEvents:ce};
+  const sv=useCallback((t,s,w,k,kh,n,lr,ta,an,m,ce,hr)=>{
+    const payload={tasks:t,sd:s,wD:w,kpis:k,kpiHistory:kh,notes:n,learnings:lr,tAi:ta,analysis:an,mode:m,calEvents:ce,hiddenRecurring:hr||[]};
     try{localStorage.setItem('awwzo-local',JSON.stringify(payload));}catch(e){}
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{if(userEmail){setSaving(true);await dbSave(userEmail,payload);setSaving(false);}},1500);
   },[userEmail]);
 
-  const tog=id=>{const nx=tasks.map(t=>t.id===id?{...t,status:t.status==="done"?"todo":"done"}:t);setTasks(nx);sv(nx,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,calEvents);};
-  const addCustomTask=t=>{const nx=[...tasks,t];setTasks(nx);sv(nx,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,calEvents);};
-  const deleteTask=id=>{const nx=tasks.filter(t=>t.id!==id);setTasks(nx);sv(nx,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,calEvents);};
-  const saveLearning=(id,data)=>{const nx={...learnings,[id]:data};setLearnings(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,nx,tAi,analysis,mode,calEvents);};
+  const tog=id=>{const nx=tasks.map(t=>t.id===id?{...t,status:t.status==="done"?"todo":"done"}:t);setTasks(nx);sv(nx,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,calEvents,hiddenRecurring);};
+  const addCustomTask=t=>{const nx=[...tasks,t];setTasks(nx);sv(nx,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,calEvents,hiddenRecurring);};
+  const deleteTask=id=>{const nx=tasks.filter(t=>t.id!==id);setTasks(nx);sv(nx,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,calEvents,hiddenRecurring);};
+  const saveLearning=(id,data)=>{const nx={...learnings,[id]:data};setLearnings(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,nx,tAi,analysis,mode,calEvents,hiddenRecurring);};
   const addCalEvent=e=>{const nx=[...calEvents,e];setCalEvents(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,nx);};
   const deleteCalEvent=id=>{const nx=calEvents.filter(e=>e.id!==id);setCalEvents(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,mode,nx);};
 
@@ -367,7 +371,7 @@ export default function Home(){
     let nh=kpiHistory;
     if(!last||last.date!==today)nh=[...kpiHistory,{date:today,...newKpis}];
     else nh=kpiHistory.map((h,i)=>i===kpiHistory.length-1?{date:today,...newKpis}:h);
-    setKpiHistory(nh);setKpis(newKpis);sv(tasks,sd,wD,newKpis,nh,notes,learnings,tAi,analysis,mode,calEvents);
+    setKpiHistory(nh);setKpis(newKpis);sv(tasks,sd,wD,newKpis,nh,notes,learnings,tAi,analysis,mode,calEvents,hiddenRecurring);
   };
 
   const sc=sched(tasks,new Date(sd));
@@ -407,7 +411,7 @@ For CALENDAR HEALTH CHECK: analyse if content is scheduled consistently, if upco
 Be specific to Awwzo. Reference actual task names. Plain text only.`;
 
     const txt=await callAI(sys,`COMPLETED WITH LEARNINGS:\n${doneL||"None"}\n\nPENDING:\n${pendL}\n\n${depIss.length?`DEPENDENCY ISSUES:\n${depIss.join("\n")}`:"No dep issues."}\n\nKPI HISTORY:\n${kpiStr}\n\n${calStr}\n\nStart: ${sd}\n\nFull assessment.`);
-    setAnalysis(txt);setMode("dashboard");setView("analysis");sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,txt,"dashboard",calEvents);
+    setAnalysis(txt);setMode("dashboard");setView("analysis");sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,txt,"dashboard",calEvents,hiddenRecurring);
   }catch(e){setAnalysis("Connection failed.");setMode("dashboard");}};
 
   const askTask=async t=>{
@@ -416,7 +420,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
     try{const sys=`You are Awwzo's marketing execution coach. Premium dog daycare/boarding/training, Bengaluru, 5.0 Google rating, 1L+ care hours, WhatsApp primary, parent.awwzo.com signup.\n\nComplete guide with EXACT → headers (one per line):\n→ WHAT THIS IS\n→ WHY IT MATTERS\n→ STEP-BY-STEP EXECUTION\n→ COMMON MISTAKES TO AVOID\n→ HOW TO KNOW IT'S WORKING\n→ ESTIMATED TIME\n\nSpecific to Awwzo. Plain text.`;
     const depN=(t.deps||[]).map(d=>tasks.find(x=>x.id===d)?.task||d).join(", ")||"None";
     const txt=await callAI(sys,`Task: "${t.task}"\nChannel: ${t.channel}\nPriority: ${t.priority}\nPhase: ${t.phase} → ${t.group}\nDuration: ${t.dur||1}d\nDepends on: ${depN}${t.comment?`\nContext: ${t.comment}`:""}\n\nComplete guide.`);
-    const nx={...tAi,[t.id]:txt};setTAi(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,nx,analysis,"dashboard",calEvents);
+    const nx={...tAi,[t.id]:txt};setTAi(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,nx,analysis,"dashboard",calEvents,hiddenRecurring);
     }catch(e){const nx={...tAi,[t.id]:"Failed."};setTAi(nx);}setTAiL(null);};
 
   const askG=async()=>{if(!aiP.trim())return;setAiL(true);setAiR("");try{
@@ -496,7 +500,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
               <div style={{fontSize:S.xxl,fontWeight:800,color:"#E67E22"}}>{Math.round((tDn/tasks.length)*100)}%</div>
               <div style={{fontSize:10,color:"#5A6B7D"}}>{tDn}/{tasks.length}</div>
             </div>
-            <button onClick={()=>{setMode("setup");sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,"setup",calEvents);}} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:S.rSm,padding:"8px 14px",color:"#6B7B8D",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↻ Re-setup</button>
+            <button onClick={()=>{setMode("setup");sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,"setup",calEvents,hiddenRecurring);}} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:S.rSm,padding:"8px 14px",color:"#6B7B8D",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↻ Re-setup</button>
             <button onClick={logout} style={{background:"rgba(231,76,60,.1)",border:"1px solid rgba(231,76,60,.2)",borderRadius:S.rSm,padding:"8px 14px",color:"#E74C3C",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Logout</button>
           </div>
         </div>
@@ -522,7 +526,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
         {view==="analysis"&&(<>{analysis?(()=>{const secs=parseSec(analysis);return(<div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:20,color:"#E67E22"}}>✦</span><h2 style={{margin:0,fontSize:S.xl,fontWeight:700}}>AI Strategic Analysis</h2></div>
-            <button onClick={()=>{setMode("setup");sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,"","setup",calEvents);}} style={{padding:"8px 14px",borderRadius:S.rSm,border:"1px solid #D1D8E0",background:"#fff",color:"#6B7B8D",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↻ Re-analyse</button>
+            <button onClick={()=>{setMode("setup");sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,"","setup",calEvents,hiddenRecurring);}} style={{padding:"8px 14px",borderRadius:S.rSm,border:"1px solid #D1D8E0",background:"#fff",color:"#6B7B8D",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↻ Re-analyse</button>
           </div>
           {secs.map((s,i)=>(<div key={i} style={{background:"#fff",borderRadius:S.radius,padding:"16px 20px",marginBottom:8,border:"1px solid #E8ECF0"}}>
             {s.title&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}><span style={{fontSize:18}}>{SI[s.title]||"→"}</span><span style={{fontSize:S.sm,fontWeight:700,color:SCo[s.title]||"#2C3E50",textTransform:"uppercase"}}>{s.title}</span></div>}
@@ -564,7 +568,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
                     </button>
                     {d&&<button onClick={()=>setShowLearning(t)} style={{padding:"6px 14px",borderRadius:S.rSm,border:"1px solid #27AE60",background:hasLr?"#E8F8F5":"transparent",color:"#27AE60",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{hasLr?"📝 Edit":"📝 Log Result"}</button>}
                     {t.isCustom&&<button onClick={()=>{if(confirm("Delete?"))deleteTask(t.id);}} style={{padding:"6px 10px",borderRadius:S.rSm,border:"1px solid #E74C3C",background:"transparent",color:"#E74C3C",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Delete</button>}
-                    {eNote===t.id?(<div style={{flex:1}}><textarea value={notes[t.id]||""} onChange={e=>{const n={...notes,[t.id]:e.target.value};setNotes(n);sv(tasks,sd,wD,kpis,kpiHistory,n,learnings,tAi,analysis,"dashboard",calEvents);}} placeholder="Note..." style={{width:"100%",minHeight:50,padding:8,borderRadius:S.rSm,border:"1px solid #C4CDD5",fontSize:S.xs,fontFamily:"inherit",resize:"vertical",boxSizing:"border-box"}}/><button onClick={()=>setENote(null)} style={{marginTop:4,padding:"4px 12px",borderRadius:4,border:"none",background:"#0F1923",color:"#fff",fontSize:S.tag,cursor:"pointer",fontFamily:"inherit"}}>Save</button></div>):(<button onClick={()=>setENote(t.id)} style={{padding:0,border:"none",background:"transparent",color:notes[t.id]?"#2471A3":"#C4CDD5",fontSize:S.xs,cursor:"pointer",fontFamily:"inherit"}}>{notes[t.id]?`📝 ${notes[t.id].substring(0,40)}...`:"+ Note"}</button>)}
+                    {eNote===t.id?(<div style={{flex:1}}><textarea value={notes[t.id]||""} onChange={e=>{const n={...notes,[t.id]:e.target.value};setNotes(n);sv(tasks,sd,wD,kpis,kpiHistory,n,learnings,tAi,analysis,"dashboard",calEvents,hiddenRecurring);}} placeholder="Note..." style={{width:"100%",minHeight:50,padding:8,borderRadius:S.rSm,border:"1px solid #C4CDD5",fontSize:S.xs,fontFamily:"inherit",resize:"vertical",boxSizing:"border-box"}}/><button onClick={()=>setENote(null)} style={{marginTop:4,padding:"4px 12px",borderRadius:4,border:"none",background:"#0F1923",color:"#fff",fontSize:S.tag,cursor:"pointer",fontFamily:"inherit"}}>Save</button></div>):(<button onClick={()=>setENote(t.id)} style={{padding:0,border:"none",background:"transparent",color:notes[t.id]?"#2471A3":"#C4CDD5",fontSize:S.xs,cursor:"pointer",fontFamily:"inherit"}}>{notes[t.id]?`📝 ${notes[t.id].substring(0,40)}...`:"+ Note"}</button>)}
                   </div>
                   {d&&hasLr&&!isO&&(<div style={{marginTop:8,padding:"10px 14px",borderRadius:S.rSm,background:"#F0FFF4",border:"1px solid #C6F6D5"}}><div style={{fontSize:S.xs,fontWeight:600,color:"#27AE60",marginBottom:4}}>📊 Learning</div>{learnings[t.id].result&&<p style={{margin:"0 0 2px",fontSize:S.xs,color:"#374151"}}><b>Result:</b> {learnings[t.id].result}</p>}{learnings[t.id].metric&&<p style={{margin:0,fontSize:S.xs,color:"#374151"}}><b>Metric:</b> {learnings[t.id].metric}</p>}</div>)}
                   {isO&&aiC&&(<div style={{marginTop:12,borderRadius:S.radius,overflow:"hidden",border:`1px solid ${pm?.a}20`,background:"#FAFBFC"}}>
@@ -589,6 +593,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
             <div style={{display:"flex",gap:6}}>
               <button onClick={()=>setShowAddCal(toI(new Date()))} style={{padding:"8px 16px",borderRadius:S.rSm,border:"none",background:"linear-gradient(135deg,#E67E22,#F39C12)",color:"#fff",fontSize:S.sm,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add Event</button>
               <button onClick={()=>{setCalMonth(new Date().getMonth());setCalYear(new Date().getFullYear());}} style={{padding:"8px 14px",borderRadius:S.rSm,border:"1px solid #D1D8E0",background:"#fff",color:"#6B7B8D",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Today</button>
+              {hiddenRecurring.length>0&&<button onClick={()=>{setHiddenRecurring([]);sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,"dashboard",calEvents,[]);}} style={{padding:"8px 14px",borderRadius:S.rSm,border:"1px solid #27AE60",background:"transparent",color:"#27AE60",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Restore Removed ({hiddenRecurring.length})</button>}
             </div>
           </div>
 
@@ -618,7 +623,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
               {monthDays.map((day,i)=>{
                 if(!day) return <div key={`e${i}`} style={{minHeight:80,background:"#FAFBFC",borderRight:"1px solid #F0F2F5",borderBottom:"1px solid #F0F2F5"}}/>;
                 const ds=toI(day);const isToday=ds===todayStr;
-                const evts=getEventsForDate(ds,calEvents);
+                const evts=getEventsForDate(ds,calEvents,hiddenRecurring);
                 const hasWarning=evts.length>=4;
                 return(<div key={ds} onClick={()=>setCalSelected(calSelected===ds?null:ds)} style={{minHeight:80,padding:"4px 6px",borderRight:"1px solid #F0F2F5",borderBottom:"1px solid #F0F2F5",background:calSelected===ds?"#EBF5FB":isToday?"#FFF7ED":"#fff",cursor:"pointer",position:"relative"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -636,7 +641,7 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
 
           {/* Day detail panel */}
           {calSelected&&(()=>{
-            const evts=getEventsForDate(calSelected,calEvents);
+            const evts=getEventsForDate(calSelected,calEvents,hiddenRecurring);
             return(<div style={{marginTop:16,background:"#fff",borderRadius:S.radius,padding:"16px 20px",border:"1px solid #E8ECF0"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <h3 style={{margin:0,fontSize:S.lg,fontWeight:700}}>{fDF(new Date(calSelected+"T12:00:00"))}</h3>
@@ -660,7 +665,8 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
                     {e.time&&<p style={{margin:"2px 0 0",fontSize:S.xs,color:"#6B7B8D"}}>🕐 {e.time}</p>}
                     {e.notes&&<p style={{margin:"4px 0 0",fontSize:S.xs,color:"#6B7B8D"}}>{e.notes}</p>}
                   </div>
-                  {e.id&&e.id.startsWith("cal-")&&<button onClick={()=>deleteCalEvent(e.id)} style={{background:"transparent",border:"none",color:"#E74C3C",cursor:"pointer",fontSize:14}}>×</button>}
+                  {e.id&&e.id.startsWith("cal-")&&<button onClick={(ev)=>{ev.stopPropagation();deleteCalEvent(e.id);}} style={{background:"transparent",border:"none",color:"#E74C3C",cursor:"pointer",fontSize:16,padding:"4px"}}>×</button>}
+                  {e.recurId&&<button onClick={(ev)=>{ev.stopPropagation();const nx=[...hiddenRecurring,e.recurId];setHiddenRecurring(nx);sv(tasks,sd,wD,kpis,kpiHistory,notes,learnings,tAi,analysis,"dashboard",calEvents,nx);}} style={{background:"transparent",border:"1px solid #E74C3C",borderRadius:4,color:"#E74C3C",cursor:"pointer",fontSize:S.tag,fontFamily:"inherit",padding:"2px 8px"}}>Remove</button>}
                 </div>))}
               </div>}
             </div>);
@@ -683,8 +689,8 @@ Be specific to Awwzo. Reference actual task names. Plain text only.`;
 
         {/* ═══ WEEKLY ═══ */}
         {view==="weekly"&&(<>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><h2 style={{margin:0,fontSize:S.xl,fontWeight:700}}>☑ Weekly Checklist</h2><button onClick={()=>{setWD({});sv(tasks,sd,{},kpis,kpiHistory,notes,learnings,tAi,analysis,"dashboard",calEvents);}} style={{padding:"8px 14px",borderRadius:S.rSm,border:"1px solid #E74C3C",background:"transparent",color:"#E74C3C",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Reset</button></div>
-          {WK.map(t=>{const d=wD[t.id];return(<div key={t.id} onClick={()=>{const n={...wD,[t.id]:!d};setWD(n);sv(tasks,sd,n,kpis,kpiHistory,notes,learnings,tAi,analysis,"dashboard",calEvents);}} style={{background:d?"#F7FBF7":"#fff",borderRadius:S.rSm,padding:"14px 16px",marginBottom:6,border:`1px solid ${d?"#D5E8D4":"#E8ECF0"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><h2 style={{margin:0,fontSize:S.xl,fontWeight:700}}>☑ Weekly Checklist</h2><button onClick={()=>{setWD({});sv(tasks,sd,{},kpis,kpiHistory,notes,learnings,tAi,analysis,"dashboard",calEvents,hiddenRecurring);}} style={{padding:"8px 14px",borderRadius:S.rSm,border:"1px solid #E74C3C",background:"transparent",color:"#E74C3C",fontSize:S.xs,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Reset</button></div>
+          {WK.map(t=>{const d=wD[t.id];return(<div key={t.id} onClick={()=>{const n={...wD,[t.id]:!d};setWD(n);sv(tasks,sd,n,kpis,kpiHistory,notes,learnings,tAi,analysis,"dashboard",calEvents,hiddenRecurring);}} style={{background:d?"#F7FBF7":"#fff",borderRadius:S.rSm,padding:"14px 16px",marginBottom:6,border:`1px solid ${d?"#D5E8D4":"#E8ECF0"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
             <div style={{width:S.check,height:S.check,minWidth:S.check,borderRadius:S.rSm,border:d?"2px solid #27AE60":"2px solid #C4CDD5",background:d?"#27AE60":"transparent",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:S.sm,fontWeight:800}}>{d&&"✓"}</div>
             <span style={{flex:1,fontSize:S.base,fontWeight:500,color:d?"#95A5A6":"#1a1a2e",textDecoration:d?"line-through":"none"}}>{t.task}</span>
             <span style={{fontSize:S.tag,fontWeight:700,color:"#fff",background:CC[t.channel]||"#607D8B",padding:"3px 10px",borderRadius:4}}>{t.channel}</span>
